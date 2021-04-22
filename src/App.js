@@ -1,9 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { Engine, Scene, useBeforeRender, useClick, useHover, useScene } from 'react-babylonjs'
+import React, { Suspense, useEffect, useRef, useState } from 'react'
+import { Engine, Scene, useBeforeRender, useScene, useSceneLoader } from 'react-babylonjs'
 import { Vector3, Color3, ShaderMaterial, Effect, GlowLayer } from '@babylonjs/core'
-
-const DefaultScale = new Vector3(1, 1, 1);
-const BiggerScale = new Vector3(1.25, 1.25, 1.25);
+import '@babylonjs/loaders'
 
 const glsl = x => x;
 
@@ -21,7 +19,7 @@ Effect.ShadersStore['playgroundVertexShader'] = glsl`
       vPosition = position;
       vPositionW = (world * vec4(position, 1.0)).xyz;
 
-      mat3 normalMatrix = mat3(world) / length(vec3(world[0][0],world[0][1],world[0][2]));
+      mat3 normalMatrix = mat3(world);
       vNormalW = normalMatrix * normal;
       gl_Position = worldViewProjection * vec4(position, 1.0);
       vUV = uv;
@@ -33,6 +31,7 @@ Effect.ShadersStore['playgroundFragmentShader'] = glsl`
   varying vec3 vPosition;
   varying vec3 vNormalW;
   uniform vec3 cameraPosition;
+  uniform float hOffset;
 
   vec3 hsl2rgb( in vec3 c )
   {
@@ -76,102 +75,115 @@ Effect.ShadersStore['playgroundFragmentShader'] = glsl`
   void main() {
 
 
-      vec3 viewDirectionW = normalize(cameraPosition - vPositionW);
-      float fresnelTerm = dot(viewDirectionW, vNormalW);
-      fresnelTerm = clamp(1. - fresnelTerm, 0., 1.0);
+        vec3 viewDirectionW = normalize(cameraPosition - vPositionW);
+        float fresnelTerm = dot(viewDirectionW, vNormalW);
+        fresnelTerm = clamp(1. - fresnelTerm, 0., 1.0);
 
-      fresnelTerm = pow(fresnelTerm, 0.5);
+        fresnelTerm = pow(fresnelTerm, 2.);
 
-      vec4 from = vec4(1., 1., 1., 1.);
-      vec4 to = vec4(vPosition, 0.);
-      vec4 color = mix(from, to, fresnelTerm);
+        vec4 from = vec4(1., 1., 1., 1.);
 
-      vec3 hsl = rgb2hsl(abs(color.xyz));
-      hsl.z = max(hsl.z, 0.5);
-      vec3 rgb = hsl2rgb(hsl);
-      float a = 1. - fresnelTerm;
+        float h = atan(vPosition.y, vPosition.x)/(2.*3.14159);
+        h = mod((h + hOffset), 1.);
+        vec3 hsl = vec3(h, 1., .5);
+        vec3 rgb = hsl2rgb(hsl);
+        vec4 to = vec4(rgb, 0.);
 
-      gl_FragColor = vec4(rgb, a);
-  }
+        vec4 color = mix(from, to, fresnelTerm);
+
+
+        gl_FragColor = color;
+    }
 `;
 
 
 
 export function useWindowSize(breakpoints) {
-  // Initialize state with undefined width/height so server and client renders match
-  // Learn more here: https://joshwcomeau.com/react/the-perils-of-rehydration/
-  const [windowSize, setWindowSize] = useState({
-      width: undefined,
-      height: undefined,
-  });
-  useEffect(() => {
-      // Handler to call on window resize
-      function handleResize() {
-          // Set window width/height to state
-          setWindowSize({
-              width: window.innerWidth,
-              height: window.innerHeight,
-          });
-      }
-      // Add event listener
-      window.addEventListener("resize", handleResize);
-      // Call handler right away so state gets updated with initial window size
-      handleResize();
-      // Remove event listener on cleanup
-      return () => window.removeEventListener("resize", handleResize);
-  }, []); // Empty array ensures that effect is only run on mount
-  return windowSize;
+    // Initialize state with undefined width/height so server and client renders match
+    // Learn more here: https://joshwcomeau.com/react/the-perils-of-rehydration/
+    const [windowSize, setWindowSize] = useState({
+        width: undefined,
+        height: undefined,
+    });
+    useEffect(() => {
+        // Handler to call on window resize
+        function handleResize() {
+            // Set window width/height to state
+            setWindowSize({
+                width: window.innerWidth,
+                height: window.innerHeight,
+            });
+        }
+        // Add event listener
+        window.addEventListener("resize", handleResize);
+        // Call handler right away so state gets updated with initial window size
+        handleResize();
+        // Remove event listener on cleanup
+        return () => window.removeEventListener("resize", handleResize);
+    }, []); // Empty array ensures that effect is only run on mount
+    return windowSize;
 }
 const Playground = () => {
-  const scene = useScene()
-  const objectRef = useRef();
+    const scene = useScene()
 
-  useEffect(() => {
-    var gl = new GlowLayer("glow", scene, {
-      blurKernelSize: 100,
-    });
-    
-    const material = new ShaderMaterial(
-      'playgroundMaterial',
-      scene,
-      {
-          vertex: 'playground',
-          fragment: 'playground',
-      },
-      {
-          attributes: ['position', 'normal', 'uv', 'world0', 'world1', 'world2', 'world3'],
-          uniforms: ['worldView', 'worldViewProjection', 'view', 'projection', 'direction', 'cameraPosition', 'world'],
-          needAlphaBlending: true
-        }
-    );
-    
-    material.setColor3("toColor", new Color3(1.0, 0.0, 0.0))
+    const model = useSceneLoader("/", "Blast.glb");
+    const [mat, setMat] = useState();
 
-    objectRef.current.material = material;
-    gl.referenceMeshToUseItsOwnMaterial(objectRef.current);
-  }, [scene])
+    useEffect(() => {
 
-  useBeforeRender((scene) => {
-    const deltaS = scene.paused ? 0 : scene.getEngine().getDeltaTime() / 400;
-    objectRef.current.rotation.y += deltaS;
-  })
-  
-  return <sphere scaling={new Vector3(10, 10, 10)} ref={objectRef} />
+        var gl = new GlowLayer("glow", scene, {
+            blurKernelSize: 100,
+        });
+
+        const material = new ShaderMaterial(
+            'playgroundMaterial',
+            scene,
+            {
+                vertex: 'playground',
+                fragment: 'playground',
+            },
+            {
+                attributes: ['position', 'normal', 'uv', 'world0', 'world1', 'world2', 'world3'],
+                uniforms: ['worldView', 'worldViewProjection', 'view', 'projection', 'direction', 'cameraPosition', 'world'],
+                needAlphaBlending: true
+            }
+        );
+        
+        const mesh = model.meshes[1];
+        material.setFloat("hOffset", 0);
+        setMat(material);
+
+        mesh.material = material;
+        material.hOffset = 0.;
+        gl.referenceMeshToUseItsOwnMaterial(mesh);
+
+
+    }, [model, scene])
+
+    useBeforeRender((scene) => {
+        if(!mat) return;
+        mat.hOffset += 0.08;
+        mat.setFloat("hOffset", mat.hOffset);
+    })
+
+    return false;
 }
 
 function App() {
-  const windowSize = useWindowSize();
+    const windowSize = useWindowSize();
 
-  return (
-    <Engine width={windowSize.width} height={windowSize.height} antialias canvasId='babylonJS' >
-      <Scene>
-        <arcRotateCamera name="camera1" target={Vector3.Zero()} alpha={Math.PI / 2} beta={Math.PI / 4} radius={8} />
-        <directionalLight name="dLight" intensity={0.5} direction={ new Vector3(0, -1, 0)}/>
-        <hemisphericLight name='light1' intensity={0.5} direction={Vector3.Up()} />
-        <Playground />
-      </Scene>
-    </Engine>
-  );
+    return (
+        <Engine width={windowSize.width} height={windowSize.height} antialias canvasId='babylonJS' >
+            <Scene>
+                <arcRotateCamera name="camera1" target={Vector3.Zero()} alpha={Math.PI / 2} beta={Math.PI / 4} radius={8} />
+                <directionalLight name="dLight" intensity={0.5} direction={new Vector3(0, -1, 0)} />
+                <hemisphericLight name='light1' intensity={0.5} direction={Vector3.Up()} />
+                <Suspense fallback={false}>
+                    <Playground />
+                </Suspense>
+            </Scene>
+        </Engine>
+    );
 }
 
 export default App;
